@@ -22,13 +22,27 @@ def test_finding_parses_enum_values() -> None:
     )
 
     response = ReviewResponse(
+        review_id="11111111-1111-1111-1111-111111111111",
         status="completed",
+        base_commit="a" * 40,
+        head_commit="b" * 40,
         summary="发现一个问题。",
         findings=[finding],
     )
 
     assert response.findings[0].severity.value == "high"
     assert response.findings[0].category.value == "security"
+
+
+def test_review_request_strips_and_deduplicates_custom_rules() -> None:
+    request = ReviewRequest(
+        repo_path="D:/agent/demo",
+        review_focus=[" 安全性 ", "安全性"],
+        custom_rules=["禁止拼接 SQL", "禁止拼接 SQL"],
+    )
+
+    assert request.review_focus == ["安全性"]
+    assert request.custom_rules == ["禁止拼接 SQL"]
 
 
 def test_models_reject_unknown_fields() -> None:

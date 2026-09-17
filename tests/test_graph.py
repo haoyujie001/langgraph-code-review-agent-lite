@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from code_review_agent_lite.git_service import GitService
 from code_review_agent_lite.graph import build_review_graph
+from code_review_agent_lite.history import HistoryStore
 from code_review_agent_lite.schemas import Finding, ModelReviewResult, ReviewRequest
 from code_review_agent_lite.state import create_initial_state
 from code_review_agent_lite.tools import build_review_tools
@@ -32,6 +33,7 @@ def create_graph(
         max_tool_calls=max_tool_calls,
         structured_output_method="json_mode",
         output_dir=allowed_root / "reports",
+        history_store=HistoryStore(allowed_root / "history"),
     )
 
 
@@ -69,11 +71,15 @@ def test_initial_state_contains_message_and_round_fields(tmp_path: Path) -> None
     )
 
     assert state["messages"] == []
+    assert len(state["review_id"]) == 32
+    assert state["base_commit"] == ""
+    assert state["head_commit"] == ""
     assert state["added_lines"] == {}
     assert state["tool_rounds"] == 0
     assert state["tool_calls"] == 0
     assert state["status"] == "pending"
     assert state["markdown_report"] is None
+    assert state["history_saved"] is False
 
 
 def test_graph_contains_agent_loop_nodes(
@@ -93,6 +99,7 @@ def test_graph_contains_agent_loop_nodes(
         "structure_review",
         "stop_review",
         "generate_report",
+        "save_history",
         "__end__",
     }
     assert {edge.source for edge in drawable_graph.edges} >= {
@@ -103,6 +110,7 @@ def test_graph_contains_agent_loop_nodes(
         "structure_review",
         "stop_review",
         "generate_report",
+        "save_history",
     }
 
 
@@ -133,9 +141,34 @@ def test_agent_can_finish_without_calling_a_tool(
     assert model.structured_output_method == "json_mode"
     assert len(model.structured_received_messages) == 1
     assert result["markdown_report"].is_file()
+    assert result["base_commit"] == demo_repository.base_sha
+    assert result["head_commit"] == demo_repository.head_sha
+    assert (tmp_path / "history" / f"{result['review_id']}.json").is_file()
+    assert result["history_saved"] is True
     assert "未发现需要报告的问题" in result["markdown_report"].read_text(
         encoding="utf-8"
     )
+
+
+def test_custom_rules_are_included_in_the_review_prompt(
+    demo_repository: DemoRepository,
+    tmp_path: Path,
+) -> None:
+    model = ScriptedToolCallingModel([AIMessage(content="完成")])
+    graph = create_graph(demo_repository, tmp_path, model)
+    request = ReviewRequest(
+        repo_path=demo_repository.path,
+        base_ref=demo_repository.base_sha,
+        head_ref=demo_repository.head_sha,
+        review_focus=["安全性"],
+        custom_rules=["所有 SQL 必须使用参数化查询"],
+    )
+
+    graph.invoke(create_initial_state(request))
+
+    prompt = str(model.received_messages[0][1].content)
+    assert "审查重点：安全性" in prompt
+    assert "所有 SQL 必须使用参数化查询" in prompt
 
 
 def test_agent_calls_tool_and_returns_to_model(
@@ -184,6 +217,31 @@ def test_agent_calls_tool_and_returns_to_model(
     report = result["markdown_report"].read_text(encoding="utf-8")
     assert "[HIGH] src/app.py:5" in report
     assert "改用参数化查询" in report
+
+
+def test_agent_can_recover_from_invalid_tool_arguments(
+    demo_repository: DemoRepository,
+    tmp_path: Path,
+) -> None:
+    model = ScriptedToolCallingModel(
+        [
+            tool_call_message("read_file", {"path": "."}, "invalid-path"),
+            AIMessage(content="工具参数已修正，审查完成。"),
+        ],
+        ModelReviewResult(summary="审查完成。", findings=[]),
+    )
+    graph = create_graph(demo_repository, tmp_path, model)
+
+    result = graph.invoke(create_state(demo_repository))
+
+    assert result["status"] == "completed"
+    assert result["tool_rounds"] == 1
+    assert result["tool_calls"] == 1
+    tool_message = next(
+        message for message in result["messages"] if isinstance(message, ToolMessage)
+    )
+    assert "工具调用失败" in str(tool_message.content)
+    assert "文件路径必须位于仓库内" in str(tool_message.content)
 
 
 def test_agent_stops_when_maximum_tool_rounds_is_reached(

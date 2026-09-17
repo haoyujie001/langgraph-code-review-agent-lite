@@ -12,7 +12,7 @@ from code_review_agent_lite.schemas import Finding, ModelReviewResult
 
 
 class WrongReviewTypeModel(ScriptedToolCallingModel):
-    """Return an invalid provider value without raising an exception."""
+    """返回无效模型值但不主动抛出异常。"""
 
     def invoke(self, messages):
         self.received_messages.append(list(messages))
@@ -20,7 +20,7 @@ class WrongReviewTypeModel(ScriptedToolCallingModel):
 
 
 def post_json(app, path: str, payload: dict[str, object]) -> Response:
-    """Send one in-process POST request to the FastAPI application."""
+    """向 FastAPI 应用发送进程内 POST 请求。"""
 
     async def request() -> Response:
         transport = ASGITransport(app=app)
@@ -29,6 +29,20 @@ def post_json(app, path: str, payload: dict[str, object]) -> Response:
             base_url="http://testserver",
         ) as client:
             return await client.post(path, json=payload)
+
+    return asyncio.run(request())
+
+
+def get_json(app, path: str) -> Response:
+    """向 FastAPI 应用发送进程内 GET 请求。"""
+
+    async def request() -> Response:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.get(path)
 
     return asyncio.run(request())
 
@@ -65,6 +79,7 @@ def test_review_endpoint_invokes_agent_graph(
         Settings(
             allowed_repo_root=tmp_path,
             output_dir=tmp_path / "reports",
+            history_dir=tmp_path / "history",
             _env_file=None,
         ),
         model=model,
@@ -75,12 +90,21 @@ def test_review_endpoint_invokes_agent_graph(
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "completed"
+    assert body["base_commit"] == demo_repository.base_sha
+    assert body["head_commit"] == demo_repository.head_sha
     assert body["summary"] == "发现一处 SQL 注入问题。"
     assert body["findings"][0]["path"] == "src/app.py"
     report_path = Path(body["markdown_report"])
     assert report_path.is_file()
     assert "SQL 查询使用了字符串拼接" in report_path.read_text(encoding="utf-8")
     assert body["error"] is None
+
+    history = get_json(app, "/reviews").json()
+    assert history["total"] == 1
+    assert history["items"][0]["review_id"] == body["review_id"]
+    detail = get_json(app, f"/reviews/{body['review_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["summary"] == body["summary"]
 
 
 def test_review_endpoint_maps_repository_errors_to_bad_request(
@@ -136,6 +160,7 @@ def test_review_endpoint_maps_model_failures_to_bad_gateway(
         Settings(
             allowed_repo_root=tmp_path,
             output_dir=tmp_path / "reports",
+            history_dir=tmp_path / "history",
             _env_file=None,
         ),
         model=model,
@@ -161,6 +186,7 @@ def test_review_endpoint_maps_wrong_model_types_to_bad_gateway(
             Settings(
                 allowed_repo_root=tmp_path,
                 output_dir=tmp_path / "reports",
+                history_dir=tmp_path / "history",
                 _env_file=None,
             ),
             model=model,

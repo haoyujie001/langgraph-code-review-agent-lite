@@ -1,0 +1,454 @@
+{
+  "cases": [
+    {
+      "case_id": "sql_injection",
+      "description": "字符串拼接 SQL 应被识别为安全问题",
+      "files_before": {"src/users.py": "def find_user(cursor, user_id):\n    return cursor.execute(\"SELECT * FROM users WHERE id = ?\", (user_id,))\n"},
+      "files_after": {"src/users.py": "def find_user(cursor, user_id):\n    query = \"SELECT * FROM users WHERE id = \" + user_id\n    return cursor.execute(query)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": ["所有 SQL 必须使用参数化查询"],
+      "expected_findings": [{"path": "src/users.py", "line": 2, "category": "security"}]
+    },
+    {
+      "case_id": "command_injection",
+      "description": "shell=True 执行外部输入应被识别为安全问题",
+      "files_before": {"src/runner.py": "import subprocess\n\ndef run(command):\n    return subprocess.run([command], check=True)\n"},
+      "files_after": {"src/runner.py": "import subprocess\n\ndef run(command):\n    return subprocess.run(command, shell=True, check=True)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/runner.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "hardcoded_token",
+      "description": "代码中的固定访问令牌应被识别为安全问题",
+      "files_before": {"src/config.py": "import os\n\nAPI_TOKEN = os.environ[\"API_TOKEN\"]\n"},
+      "files_after": {"src/config.py": "API_TOKEN = \"prod-token-123456789\"\n"},
+      "review_focus": ["敏感信息"],
+      "custom_rules": ["禁止在源代码中硬编码访问令牌"],
+      "expected_findings": [{"path": "src/config.py", "line": 1, "category": "security"}]
+    },
+    {
+      "case_id": "path_traversal",
+      "description": "直接拼接用户文件名会造成目录穿越风险",
+      "files_before": {"src/uploads.py": "from pathlib import Path\n\nUPLOAD_ROOT = Path(\"/srv/uploads\")\n\ndef read_upload(filename):\n    path = (UPLOAD_ROOT / filename).resolve()\n    if not path.is_relative_to(UPLOAD_ROOT):\n        raise ValueError(\"invalid path\")\n    return path.read_text()\n"},
+      "files_after": {"src/uploads.py": "from pathlib import Path\n\nUPLOAD_ROOT = Path(\"/srv/uploads\")\n\ndef read_upload(filename):\n    return (UPLOAD_ROOT / filename).read_text()\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/uploads.py", "line": 6, "category": "security"}]
+    },
+    {
+      "case_id": "unsafe_yaml_load",
+      "description": "不安全的 YAML Loader 可能构造任意 Python 对象",
+      "files_before": {"src/parser.py": "import yaml\n\ndef parse(payload):\n    return yaml.safe_load(payload)\n"},
+      "files_after": {"src/parser.py": "import yaml\n\ndef parse(payload):\n    return yaml.load(payload, Loader=yaml.Loader)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/parser.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "unsafe_pickle_load",
+      "description": "反序列化不可信 Pickle 数据可能执行任意代码",
+      "files_before": {"src/decoder.py": "import json\n\ndef decode(payload):\n    return json.loads(payload)\n"},
+      "files_after": {"src/decoder.py": "import pickle\n\ndef decode(payload):\n    return pickle.loads(payload)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/decoder.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "eval_user_input",
+      "description": "eval 执行用户表达式会造成代码执行风险",
+      "files_before": {"src/expression.py": "import ast\n\ndef calculate(expression):\n    return ast.literal_eval(expression)\n"},
+      "files_after": {"src/expression.py": "import ast\n\ndef calculate(expression):\n    return eval(expression)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/expression.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "weak_password_hash",
+      "description": "使用 MD5 存储密码摘要是不安全的",
+      "files_before": {"src/passwords.py": "import hashlib\n\ndef hash_password(password):\n    return hashlib.sha256(password.encode()).hexdigest()\n"},
+      "files_after": {"src/passwords.py": "import hashlib\n\ndef hash_password(password):\n    return hashlib.md5(password.encode()).hexdigest()\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": ["密码摘要禁止使用 MD5"],
+      "expected_findings": [{"path": "src/passwords.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "tls_verification_disabled",
+      "description": "关闭 HTTPS 证书校验会引入中间人攻击风险",
+      "files_before": {"src/client.py": "import requests\n\ndef fetch(url):\n    return requests.get(url, timeout=5)\n"},
+      "files_after": {"src/client.py": "import requests\n\ndef fetch(url):\n    return requests.get(url, timeout=5, verify=False)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/client.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "jwt_signature_disabled",
+      "description": "关闭 JWT 签名验证会接受伪造令牌",
+      "files_before": {"src/auth.py": "import jwt\n\ndef decode_token(token, key):\n    return jwt.decode(token, key, algorithms=[\"HS256\"])\n"},
+      "files_after": {"src/auth.py": "import jwt\n\ndef decode_token(token, key):\n    return jwt.decode(token, options={\"verify_signature\": False})\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/auth.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "xss_unescaped_html",
+      "description": "未经转义的评论被插入 HTML 会造成 XSS",
+      "files_before": {"src/views.py": "from html import escape\n\ndef render_comment(comment):\n    return f\"<p>{escape(comment)}</p>\"\n"},
+      "files_after": {"src/views.py": "from html import escape\n\ndef render_comment(comment):\n    return f\"<p>{comment}</p>\"\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/views.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "open_redirect",
+      "description": "直接跳转到用户提供地址会造成开放重定向",
+      "files_before": {"src/navigation.py": "from starlette.responses import RedirectResponse\n\ndef redirect_after_login(next_url):\n    return RedirectResponse(\"/dashboard\")\n"},
+      "files_after": {"src/navigation.py": "from starlette.responses import RedirectResponse\n\ndef redirect_after_login(next_url):\n    return RedirectResponse(next_url)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": ["跳转地址必须来自站内白名单"],
+      "expected_findings": [{"path": "src/navigation.py", "line": 4, "category": "security"}]
+    },
+    {
+      "case_id": "off_by_one_index",
+      "description": "错误增加索引会跳过目标元素并可能越界",
+      "files_before": {"src/items.py": "def get_item(items, index):\n    return items[index]\n"},
+      "files_after": {"src/items.py": "def get_item(items, index):\n    return items[index + 1]\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/items.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "mutable_default_argument",
+      "description": "可变默认参数会在多次调用间共享状态",
+      "files_before": {"src/collector.py": "def add_item(item, items=None):\n    if items is None:\n        items = []\n    items.append(item)\n    return items\n"},
+      "files_after": {"src/collector.py": "def add_item(item, items=[]):\n    items.append(item)\n    return items\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/collector.py", "line": 1, "category": "bug"}]
+    },
+    {
+      "case_id": "swallowed_exception",
+      "description": "捕获所有异常后 pass 会隐藏实际失败",
+      "files_before": {"src/importer.py": "def import_data(loader):\n    try:\n        return loader.load()\n    except ValueError as exc:\n        raise RuntimeError(\"invalid data\") from exc\n"},
+      "files_after": {"src/importer.py": "def import_data(loader):\n    try:\n        return loader.load()\n    except Exception:\n        pass\n"},
+      "review_focus": ["异常处理"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/importer.py", "line": 5, "category": "bug"}]
+    },
+    {
+      "case_id": "wrong_boolean_operator",
+      "description": "将 and 改成 or 会放宽账户访问条件",
+      "files_before": {"src/access.py": "def can_access(user):\n    return user.is_active and user.is_verified\n"},
+      "files_after": {"src/access.py": "def can_access(user):\n    return user.is_active or user.is_verified\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/access.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "missing_await",
+      "description": "异步调用缺少 await 会返回协程而非响应结果",
+      "files_before": {"src/remote.py": "async def fetch(client, url):\n    return await client.fetch(url)\n"},
+      "files_after": {"src/remote.py": "async def fetch(client, url):\n    return client.fetch(url)\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/remote.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "mutate_dict_during_iteration",
+      "description": "遍历字典时直接删除键会触发运行时错误",
+      "files_before": {"src/cleanup.py": "def remove_empty(data):\n    for key in list(data):\n        if data[key] is None:\n            del data[key]\n"},
+      "files_after": {"src/cleanup.py": "def remove_empty(data):\n    for key in data:\n        if data[key] is None:\n            del data[key]\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/cleanup.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "division_guard_removed",
+      "description": "删除零值保护后平均值计算可能除零",
+      "files_before": {"src/statistics.py": "def average(total, count):\n    if count == 0:\n        return 0\n    return total / count\n"},
+      "files_after": {"src/statistics.py": "def average(total, count):\n    return round(total / count, 2)\n"},
+      "review_focus": ["边界条件"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/statistics.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "age_boundary_regression",
+      "description": "成年判断由大于等于改为大于会拒绝 18 岁用户",
+      "files_before": {"src/eligibility.py": "def is_adult(age):\n    return age >= 18\n"},
+      "files_after": {"src/eligibility.py": "def is_adult(age):\n    return age > 18\n"},
+      "review_focus": ["边界条件"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/eligibility.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "shared_class_state",
+      "description": "把实例列表改为类属性会导致实例间共享数据",
+      "files_before": {"src/cart.py": "class Cart:\n    def __init__(self):\n        self.items = []\n"},
+      "files_after": {"src/cart.py": "class Cart:\n    items = []\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/cart.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "missing_return_value",
+      "description": "删除 return 后调用方会收到 None",
+      "files_before": {"src/orders.py": "def create_order(repository, order):\n    return repository.save(order)\n"},
+      "files_after": {"src/orders.py": "def create_order(repository, order):\n    repository.save(order)\n"},
+      "review_focus": ["正确性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/orders.py", "line": 2, "category": "bug"}]
+    },
+    {
+      "case_id": "n_plus_one_queries",
+      "description": "循环逐条查询会产生 N+1 数据库请求",
+      "files_before": {"src/user_service.py": "def load_users(repository, user_ids):\n    return repository.get_users(user_ids)\n"},
+      "files_after": {"src/user_service.py": "def load_users(repository, user_ids):\n    return [repository.get_user(user_id) for user_id in user_ids]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/user_service.py", "line": 2, "category": "performance"}]
+    },
+    {
+      "case_id": "list_membership_in_loop",
+      "description": "循环内使用列表成员查询会退化为平方复杂度",
+      "files_before": {"src/filtering.py": "def allowed_ids(user_ids, blocked):\n    blocked_set = set(blocked)\n    return [user_id for user_id in user_ids if user_id not in blocked_set]\n"},
+      "files_after": {"src/filtering.py": "def allowed_ids(user_ids, blocked):\n    return [user_id for user_id in user_ids if user_id not in blocked]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/filtering.py", "line": 2, "category": "performance"}]
+    },
+    {
+      "case_id": "regex_compile_in_loop",
+      "description": "循环中反复编译正则表达式造成额外开销",
+      "files_before": {"src/matcher.py": "import re\n\ndef matches(pattern, items):\n    compiled = re.compile(pattern)\n    return [item for item in items if compiled.match(item)]\n"},
+      "files_after": {"src/matcher.py": "import re\n\ndef matches(pattern, items):\n    return [item for item in items if re.compile(pattern).match(item)]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/matcher.py", "line": 4, "category": "performance"}]
+    },
+    {
+      "case_id": "repeated_file_read",
+      "description": "循环中重复读取同一文件会产生不必要的 IO",
+      "files_before": {"src/template.py": "from pathlib import Path\n\ndef duplicate(path, count):\n    content = Path(path).read_text()\n    return [content for _ in range(count)]\n"},
+      "files_after": {"src/template.py": "from pathlib import Path\n\ndef duplicate(path, count):\n    return [Path(path).read_text() for _ in range(count)]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/template.py", "line": 4, "category": "performance"}]
+    },
+    {
+      "case_id": "blocking_sleep_in_async",
+      "description": "异步函数中使用 time.sleep 会阻塞事件循环",
+      "files_before": {"src/retry.py": "import asyncio\n\nasync def wait_before_retry(delay):\n    await asyncio.sleep(delay)\n"},
+      "files_after": {"src/retry.py": "import time\n\nasync def wait_before_retry(delay):\n    time.sleep(delay)\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/retry.py", "line": 4, "category": "performance"}]
+    },
+    {
+      "case_id": "sort_only_for_max",
+      "description": "为获取最大值排序整个列表会增加复杂度",
+      "files_before": {"src/ranking.py": "def highest_score(values):\n    return max(values)\n"},
+      "files_after": {"src/ranking.py": "def highest_score(values):\n    return sorted(values)[-1]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/ranking.py", "line": 2, "category": "performance"}]
+    },
+    {
+      "case_id": "string_concat_in_loop",
+      "description": "循环反复拼接字符串会创建大量临时对象",
+      "files_before": {"src/text.py": "def combine(parts):\n    return \"\".join(parts)\n"},
+      "files_after": {"src/text.py": "def combine(parts):\n    result = \"\"\n    for part in parts:\n        result += part\n    return result\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/text.py", "line": 4, "category": "performance"}]
+    },
+    {
+      "case_id": "unnecessary_list_materialization",
+      "description": "只为计数构造完整列表会增加内存占用",
+      "files_before": {"src/counting.py": "def count_valid(items, predicate):\n    return sum(1 for item in items if predicate(item))\n"},
+      "files_after": {"src/counting.py": "def count_valid(items, predicate):\n    return len([item for item in items if predicate(item)])\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/counting.py", "line": 2, "category": "performance"}]
+    },
+    {
+      "case_id": "custom_debug_rule",
+      "description": "自定义规则禁止提交调试输出",
+      "files_before": {"src/order.py": "def total(items):\n    return sum(items)\n"},
+      "files_after": {"src/order.py": "def total(items):\n    print(\"debug items\", items)\n    return sum(items)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止提交 print 调试输出"],
+      "expected_findings": [{"path": "src/order.py", "line": 2, "category": "maintainability"}]
+    },
+    {
+      "case_id": "broad_exception_handler",
+      "description": "把具体异常改为 Exception 会隐藏非预期错误",
+      "files_before": {"src/loader.py": "def load(repository):\n    try:\n        return repository.read()\n    except OSError:\n        return None\n"},
+      "files_after": {"src/loader.py": "def load(repository):\n    try:\n        return repository.read()\n    except Exception:\n        return None\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["只捕获能够处理的具体异常"],
+      "expected_findings": [{"path": "src/loader.py", "line": 4, "category": "maintainability"}]
+    },
+    {
+      "case_id": "unreachable_code",
+      "description": "return 后新增的代码永远不会执行",
+      "files_before": {"src/normalizer.py": "def normalize(value):\n    return value.strip().lower()\n"},
+      "files_after": {"src/normalizer.py": "def normalize(value):\n    return value.strip().lower()\n    print(\"normalized\")\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": [],
+      "expected_findings": [{"path": "src/normalizer.py", "line": 3, "category": "maintainability"}]
+    },
+    {
+      "case_id": "magic_timeout_rule",
+      "description": "自定义规则要求网络超时使用命名常量",
+      "files_before": {"src/network.py": "import requests\n\nTIMEOUT_SECONDS = 5\n\ndef fetch(url):\n    return requests.get(url, timeout=TIMEOUT_SECONDS)\n"},
+      "files_after": {"src/network.py": "import requests\n\ndef fetch(url):\n    return requests.get(url, timeout=37)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["网络超时必须使用命名常量，禁止魔法数字"],
+      "expected_findings": [{"path": "src/network.py", "line": 4, "category": "maintainability"}]
+    },
+    {
+      "case_id": "todo_placeholder",
+      "description": "支付逻辑被 TODO 占位实现替换",
+      "files_before": {"src/payment.py": "def charge(gateway, amount):\n    return gateway.charge(amount)\n"},
+      "files_after": {"src/payment.py": "def charge(gateway, amount):\n    # TODO: implement payment later\n    return True\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["生产路径禁止提交 TODO 占位实现"],
+      "expected_findings": [{"path": "src/payment.py", "line": 2, "category": "maintainability"}]
+    },
+    {
+      "case_id": "commented_out_code",
+      "description": "新增被注释掉的旧实现会增加维护噪声",
+      "files_before": {"src/names.py": "def clean_name(name):\n    return normalize(name)\n"},
+      "files_after": {"src/names.py": "def clean_name(name):\n    # return legacy_normalize(name)\n    return normalize(name)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止保留注释掉的旧代码"],
+      "expected_findings": [{"path": "src/names.py", "line": 2, "category": "maintainability"}]
+    },
+    {
+      "case_id": "mutable_global_state",
+      "description": "新增模块级可变缓存会形成隐式共享状态",
+      "files_before": {"src/cache.py": "def build_cache():\n    return {}\n"},
+      "files_after": {"src/cache.py": "CACHE = {}\n\ndef build_cache():\n    return CACHE\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止使用模块级可变全局状态"],
+      "expected_findings": [{"path": "src/cache.py", "line": 1, "category": "maintainability"}]
+    },
+    {
+      "case_id": "wildcard_import",
+      "description": "通配符导入会隐藏依赖来源并污染命名空间",
+      "files_before": {"src/handler.py": "from utils import parse_user\n\ndef handle(payload):\n    return parse_user(payload)\n"},
+      "files_after": {"src/handler.py": "from utils import *\n\ndef handle(payload):\n    return parse_user(payload)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止使用通配符导入"],
+      "expected_findings": [{"path": "src/handler.py", "line": 1, "category": "maintainability"}]
+    },
+    {
+      "case_id": "safe_parameterized_sql",
+      "description": "参数化 SQL 不应产生问题",
+      "files_before": {"src/users.py": "def ping():\n    return True\n"},
+      "files_after": {"src/users.py": "def find_user(cursor, user_id):\n    return cursor.execute(\"SELECT * FROM users WHERE id = ?\", (user_id,))\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": ["所有 SQL 必须使用参数化查询"],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_subprocess_arguments",
+      "description": "参数列表形式调用固定命令不应被误报为命令注入",
+      "files_before": {"src/status.py": "def status():\n    return \"unknown\"\n"},
+      "files_after": {"src/status.py": "import subprocess\n\ndef status():\n    return subprocess.run([\"git\", \"status\"], check=True, capture_output=True)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_path_validation",
+      "description": "解析路径并限制在根目录内不应被误报为目录穿越",
+      "files_before": {"src/uploads.py": "from pathlib import Path\n\nROOT = Path(\"/srv/uploads\")\n"},
+      "files_after": {"src/uploads.py": "from pathlib import Path\n\nROOT = Path(\"/srv/uploads\")\n\ndef read_upload(filename):\n    path = (ROOT / filename).resolve()\n    if not path.is_relative_to(ROOT):\n        raise ValueError(\"invalid path\")\n    return path.read_text()\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_yaml_load",
+      "description": "yaml.safe_load 不应被误报为不安全反序列化",
+      "files_before": {"src/parser.py": "def parse(payload):\n    return payload\n"},
+      "files_after": {"src/parser.py": "import yaml\n\ndef parse(payload):\n    return yaml.safe_load(payload)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_json_deserialization",
+      "description": "标准 JSON 解析不应被误报为任意代码执行",
+      "files_before": {"src/decoder.py": "def decode(payload):\n    return payload\n"},
+      "files_after": {"src/decoder.py": "import json\n\ndef decode(payload):\n    return json.loads(payload)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_password_hash",
+      "description": "带盐的 scrypt 密码派生不应被误报为弱哈希",
+      "files_before": {"src/passwords.py": "def hash_password(password, salt):\n    return password\n"},
+      "files_after": {"src/passwords.py": "import hashlib\n\ndef hash_password(password, salt):\n    return hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_tls_verification",
+      "description": "保持默认 TLS 校验并设置超时不应产生安全问题",
+      "files_before": {"src/client.py": "def fetch(url):\n    return url\n"},
+      "files_after": {"src/client.py": "import requests\n\ndef fetch(url):\n    return requests.get(url, timeout=5)\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_set_membership",
+      "description": "循环前转换集合是合理优化，不应产生问题",
+      "files_before": {"src/filtering.py": "def allowed_ids(user_ids, blocked):\n    return list(user_ids)\n"},
+      "files_after": {"src/filtering.py": "def allowed_ids(user_ids, blocked):\n    blocked_set = set(blocked)\n    return [user_id for user_id in user_ids if user_id not in blocked_set]\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_async_sleep",
+      "description": "异步函数使用 asyncio.sleep 不应被误报为阻塞",
+      "files_before": {"src/retry.py": "async def wait_before_retry(delay):\n    return delay\n"},
+      "files_after": {"src/retry.py": "import asyncio\n\nasync def wait_before_retry(delay):\n    await asyncio.sleep(delay)\n"},
+      "review_focus": ["性能"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_logging_rule",
+      "description": "使用 logger.debug 符合禁止 print 的自定义规则",
+      "files_before": {"src/order.py": "def total(items):\n    return sum(items)\n"},
+      "files_after": {"src/order.py": "import logging\n\nlogger = logging.getLogger(__name__)\n\ndef total(items):\n    logger.debug(\"items=%s\", items)\n    return sum(items)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止提交 print 调试输出"],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_html_escape",
+      "description": "转义用户评论后再插入 HTML 不应被误报为 XSS",
+      "files_before": {"src/views.py": "def render_comment(comment):\n    return comment\n"},
+      "files_after": {"src/views.py": "from html import escape\n\ndef render_comment(comment):\n    return f\"<p>{escape(comment)}</p>\"\n"},
+      "review_focus": ["安全性"],
+      "custom_rules": [],
+      "expected_findings": []
+    },
+    {
+      "case_id": "safe_explicit_import",
+      "description": "显式导入依赖符合禁止通配符导入的规则",
+      "files_before": {"src/handler.py": "def handle(payload):\n    return payload\n"},
+      "files_after": {"src/handler.py": "from utils import parse_user\n\ndef handle(payload):\n    return parse_user(payload)\n"},
+      "review_focus": ["可维护性"],
+      "custom_rules": ["禁止使用通配符导入"],
+      "expected_findings": []
+    }
+  ]
+}

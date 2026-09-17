@@ -1,1 +1,1 @@
-"""Small helper scripts used by the local project demo."""
+"""本地项目演示的辅助脚本。"""

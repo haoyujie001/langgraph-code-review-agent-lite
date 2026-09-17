@@ -10,11 +10,12 @@ Git Diff
   -> four read-only tools
   -> structured Chinese findings
   -> Markdown report
+  -> JSON history
 ```
 
 The project is developed one stage at a time. A later stage must not begin until the current stage is understood and accepted.
 
-## Six Stages
+## Completed Learning Stages
 
 | Stage | Status | Scope | Completion signal |
 |---|---|---|---|
@@ -24,6 +25,15 @@ The project is developed one stage at a time. A later stage must not begin until
 | 4 | Completed | DeepSeek, `bind_tools`, `ToolNode`, and conditional routing | The model decides when to call tools |
 | 5 | Completed | Chinese structured findings, basic validation, Markdown | One review produces JSON and Markdown |
 | 6 | Completed | Focused tests, demo repository, README, final verification | The complete small project is reproducible |
+
+## Focused Extensions
+
+| Feature | Status | Scope |
+|---|---|---|
+| Custom review rules | Completed | Up to five focus areas and ten short rules flow through request, state, prompt, report, and history |
+| Commit Range review | Completed | Validate refs, resolve immutable SHAs, review only the selected range, and return both SHAs |
+| Simple review history | Completed | One local JSON file per review plus list/detail API endpoints |
+| Evaluator | Completed | 50 synthetic cases, positive/negative samples, structural matching, precision, recall, and JSON result output |
 
 ## The Four Tools
 
@@ -45,6 +55,7 @@ START
        -> tools -> review_agent  (when tool calls exist)
        -> structure_review       (when no tool call exists)
   -> generate_report
+  -> save_history
   -> END
 ```
 
@@ -60,9 +71,7 @@ MCP
 RAG
 GitHub PR publishing
 SQLAlchemy / SQLite / Alembic
-review history
 tracing platforms
-evaluation datasets
 Docker
 GitHub Actions
 task queues
@@ -88,11 +97,11 @@ unique report files
 ## Size Budget
 
 ```text
-Application code: 500-950 lines
-Tests: 300-800 lines
+Application code: 700-1,400 lines
+Tests: 400-1,000 lines
 graph.py: at most 150 lines
 tools.py: at most 200 lines
-Source modules: 8-10 files
+Source modules: 10-13 files
 ```
 
 The final ceilings include a scripted tool-calling model, real temporary Git

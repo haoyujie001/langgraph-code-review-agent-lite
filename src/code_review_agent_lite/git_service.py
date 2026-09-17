@@ -1,4 +1,4 @@
-"""Small, read-only wrapper around the Git command-line client."""
+"""在严格限制仓库、提交、路径、敏感文件、执行时间和输出长度的前提下，为上层提供只读 Git 数据"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-HUNK_HEADER_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
+HUNK_HEADER_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@") #@@ -3,2 +3,3 @@
 SENSITIVE_FILENAMES = {
     ".netrc",
     ".npmrc",
@@ -30,7 +30,7 @@ SAFE_ENV_TEMPLATES = {".env.example", ".env.sample", ".env.template"}
 
 
 def is_sensitive_path(path: str) -> bool:
-    """Return whether a repository path commonly contains credentials."""
+    """判断仓库路径是否可能包含凭据。"""
 
     name = PurePosixPath(path.replace("\\", "/")).name.casefold()
     if name in SAFE_ENV_TEMPLATES:
@@ -43,24 +43,25 @@ def is_sensitive_path(path: str) -> bool:
 
 
 def extract_added_lines(diff: str) -> dict[str, set[int]]:
-    """Map each file in a unified Diff to its added Head-commit line numbers."""
+    """提取统一 Diff 中各文件的新增行号。"""
 
     added_lines: dict[str, set[int]] = {}
     current_path: str | None = None
     next_head_line: int | None = None
 
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
+        if line.startswith("diff --git "): #遇到新文件时重置状态
             current_path = None
             next_head_line = None
             continue
-        if next_head_line is None and line.startswith("+++ "):
+        if next_head_line is None and line.startswith("+++ "): #--- 表示旧文件，+++ 表示新文件
             header_path = line[4:]
             current_path = (
                 header_path.removeprefix("b/") if header_path != "/dev/null" else None
             )
             continue
-
+# --- a/src/app.py
+# +++ b/src/app.py
         hunk_match = HUNK_HEADER_PATTERN.match(line)
         if hunk_match:
             next_head_line = int(hunk_match.group("start"))
@@ -79,19 +80,19 @@ def extract_added_lines(diff: str) -> dict[str, set[int]]:
 
 
 class GitServiceError(RuntimeError):
-    """Raised when repository validation or a read-only Git command fails."""
+    """仓库校验或只读 Git 命令失败时抛出。"""
 
 
 @dataclass(frozen=True)
 class ChangedFile:
-    """One file returned by `git diff --name-status`."""
+    """`git diff --name-status` 返回的单个文件。"""
 
     status: str
     path: str
 
 
 class GitService:
-    """Read a bounded commit range from one validated local repository."""
+    """读取已校验本地仓库中的有界提交范围。"""
 
     def __init__(
         self,
@@ -112,7 +113,7 @@ class GitService:
         self._validate_repository()
 
     def resolve_commit(self, ref: str) -> str:
-        """Resolve one revision name to a full commit SHA."""
+        """将 revision 解析为完整 commit SHA。"""
 
         cleaned_ref = ref.strip()
         if not cleaned_ref or len(cleaned_ref) > 200 or cleaned_ref.startswith("-"):
@@ -129,18 +130,18 @@ class GitService:
         base_ref: str,
         head_ref: str,
     ) -> list[ChangedFile]:
-        """Return file status and path for a two-commit range."""
+        """返回两个提交之间的文件状态与路径。"""
 
         base_sha, head_sha = self.resolve_range(base_ref, head_ref)
         changed_files = self._list_changed_files(base_sha, head_sha)
         return [item for item in changed_files if not is_sensitive_path(item.path)]
 
-    def _list_changed_files(
+    def _list_changed_files(  #git diff --name-status base head
         self,
         base_sha: str,
         head_sha: str,
     ) -> list[ChangedFile]:
-        """Return the complete unfiltered file list for two resolved commits."""
+        """返回两个已解析提交间的未过滤文件列表。"""
 
         output = self._run_git_raw(
             [
@@ -168,7 +169,7 @@ class GitService:
         head_ref: str,
         path: str | None = None,
     ) -> str:
-        """Return a bounded unified Diff for the complete range or one file."""
+        """返回整个范围或单个文件的有界统一 Diff。"""
 
         diff, _added_lines = self.read_diff_with_added_lines(
             base_ref,
@@ -177,13 +178,13 @@ class GitService:
         )
         return diff
 
-    def read_diff_with_added_lines(
+    def read_diff_with_added_lines(  #git diff -U3 <base_sha> <head_sha> -- <文件路径>
         self,
         base_ref: str,
         head_ref: str,
         path: str | None = None,
     ) -> tuple[str, dict[str, set[int]]]:
-        """Return bounded model text plus line metadata from the complete Diff."""
+        """返回有界 Diff 文本及完整新增行元数据。"""
 
         base_sha, head_sha = self.resolve_range(base_ref, head_ref)
         if path:
@@ -218,8 +219,8 @@ class GitService:
             extract_added_lines(complete_output),
         )
 
-    def read_file(self, path: str, ref: str) -> str:
-        """Read one text file from a commit and add visible line numbers."""
+    def read_file(self, path: str, ref: str) -> str: #git show <commit_sha>:<文件路径>
+        """读取提交中的文本文件并添加行号。"""
 
         relative_path = self.validate_review_path(path)
         commit_sha = self.resolve_commit(ref)
@@ -234,16 +235,16 @@ class GitService:
 
         return "\n".join(
             f"{line_number:4}: {line}"
-            for line_number, line in enumerate(output.splitlines(), start=1)
-        )
+            for line_number, line in enumerate(output.splitlines(), start=1) #使用 enumerate() 生成行号
+        ) #从1开始为每一行编号。
 
-    def search_code(
+    def search_code(  #git grep -n "<搜索内容>" <commit>
         self,
         query: str,
         ref: str,
         path: str | None = None,
     ) -> str:
-        """Search tracked text files at one commit using fixed-string matching."""
+        """在提交的跟踪文件中搜索固定文本。"""
 
         cleaned_query = query.strip()
         if not cleaned_query or len(cleaned_query) > 200 or "\x00" in cleaned_query:
@@ -273,8 +274,7 @@ class GitService:
         if not output:
             return "没有找到匹配代码。"
 
-        # `git grep <commit>` prefixes every match with `<sha>:`. The SHA is
-        # fixed by the tool context, so removing it gives the model cleaner input.
+        # `git grep <commit>` 会添加 `<sha>:` 前缀，此处移除固定 SHA。
         prefix = f"{commit_sha}:"
         matches = [
             line.removeprefix(prefix) for line in output.splitlines() if line.strip()
@@ -292,12 +292,12 @@ class GitService:
         return "\n".join(visible_matches)
 
     def resolve_range(self, base_ref: str, head_ref: str) -> tuple[str, str]:
-        """Resolve both endpoints before a Diff command is constructed."""
+        """在构造 Diff 命令前解析两个端点。"""
 
         return self.resolve_commit(base_ref), self.resolve_commit(head_ref)
 
     def validate_relative_path(self, path: str) -> str:
-        """Normalize a path and keep it inside the selected repository."""
+        """规范化路径并确保它位于所选仓库内。"""
 
         normalized = path.strip().replace("\\", "/")
         posix_path = PurePosixPath(normalized)
@@ -313,14 +313,14 @@ class GitService:
         ):
             raise GitServiceError(f"文件路径必须位于仓库内: {path!r}")
 
-        # Resolving the candidate also catches symlinks that lead outside the repo.
+        # 解析候选路径也能发现指向仓库外的符号链接。
         candidate = (self.repo_path / Path(*posix_path.parts)).resolve()
         if not candidate.is_relative_to(self.repo_path):
             raise GitServiceError(f"文件路径超出仓库范围: {path!r}")
         return posix_path.as_posix()
 
     def validate_review_path(self, path: str) -> str:
-        """Validate a model-facing path and reject common credential files."""
+        """校验模型路径并拒绝常见凭据文件。"""
 
         relative_path = self.validate_relative_path(path)
         if is_sensitive_path(relative_path):
@@ -349,7 +349,7 @@ class GitService:
         output_limit: int,
         allowed_return_codes: set[int] | None = None,
     ) -> str:
-        """Run Git without a shell and return bounded standard output."""
+        """不经 shell 执行 Git 并返回有界标准输出。"""
 
         output = self._run_git_raw(
             arguments,
@@ -357,13 +357,13 @@ class GitService:
         )
         return self._limit_text(output, output_limit)
 
-    def _run_git_raw(
+    def _run_git_raw(#使用 ["git", *arguments] 将 Git 程序和命令参数组合起来，再交给 subprocess.run() 执行。
         self,
         arguments: Iterable[str],
         *,
         allowed_return_codes: set[int] | None = None,
     ) -> str:
-        """Run Git without truncating stdout so callers can derive metadata."""
+        """不截断标准输出地执行 Git，供调用方提取元数据。"""
 
         return_codes = allowed_return_codes or {0}
         environment = os.environ.copy()

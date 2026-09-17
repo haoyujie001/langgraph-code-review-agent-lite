@@ -1,4 +1,4 @@
-"""Application settings loaded from environment variables and `.env`."""
+"""从环境变量和 `.env` 加载应用配置。"""
 
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Configuration shared by the API and review workflow."""
+    """API 与审查流程的共享配置。"""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "LangGraph Code Review Agent Lite"
-    app_version: str = "0.6.2"
+    app_version: str = "0.7.0"
     allowed_repo_root: Path = Field(default_factory=Path.cwd)
     git_timeout_seconds: int = Field(default=10, ge=1, le=60)
     max_file_chars: int = Field(default=20_000, ge=1_000, le=100_000)
@@ -37,10 +37,11 @@ class Settings(BaseSettings):
         "json_mode",
     ] = "json_mode"
     output_dir: Path = Path("outputs")
+    history_dir: Path = Path("outputs/history")
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Build settings once for the process."""
+    """为当前进程创建并缓存配置。"""
 
     return Settings()

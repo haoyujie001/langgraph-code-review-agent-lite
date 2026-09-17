@@ -1,4 +1,4 @@
-"""Four read-only tools exposed to the LangGraph review agent."""
+"""提供给 LangGraph 审查 Agent 的四个只读工具。"""
 
 from langchain_core.tools import BaseTool, tool
 
@@ -10,10 +10,9 @@ def build_review_tools(
     base_ref: str,
     head_ref: str,
 ) -> list[BaseTool]:
-    """Bind one repository and commit range to four model-facing tools."""
+    """将仓库和提交范围绑定到四个模型工具。"""
 
-    # Resolve the range once. The model never receives a repository path or chooses
-    # a different commit after the review starts.
+    # 提前解析提交范围，模型无法切换仓库或提交。
     base_sha, head_sha = git_service.resolve_range(base_ref, head_ref)
 
     @tool

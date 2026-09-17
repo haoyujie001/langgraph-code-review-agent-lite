@@ -1,30 +1,32 @@
-"""FastAPI application entry point."""
+"""FastAPI 应用入口。"""
 
-from fastapi import FastAPI, HTTPException
+from uuid import UUID
+
+from fastapi import FastAPI, HTTPException, Query
 
 from code_review_agent_lite.config import Settings, get_settings
-from code_review_agent_lite.git_service import GitService, GitServiceError
-from code_review_agent_lite.graph import build_review_graph
+from code_review_agent_lite.git_service import GitServiceError
+from code_review_agent_lite.history import HistoryNotFoundError, HistoryStoreError
 from code_review_agent_lite.reviewer import (
     ModelConfigurationError,
     ModelInvocationError,
     ToolCallingModel,
-    create_chat_model,
 )
 from code_review_agent_lite.schemas import (
     HealthResponse,
+    ReviewHistoryList,
+    ReviewHistoryRecord,
     ReviewRequest,
     ReviewResponse,
 )
-from code_review_agent_lite.state import create_initial_state
-from code_review_agent_lite.tools import build_review_tools
+from code_review_agent_lite.service import ReviewService
 
 
 def create_app(
     settings: Settings | None = None,
     model: ToolCallingModel | None = None,
 ) -> FastAPI:
-    """Create an application with explicit, testable settings."""
+    """使用显式、可测试的配置创建应用。"""
 
     app_settings = settings or get_settings()
     application = FastAPI(
@@ -32,6 +34,7 @@ def create_app(
         version=app_settings.app_version,
         description="A small Code Review Agent built while learning LangGraph.",
     )
+    review_service = ReviewService(app_settings, model)
 
     @application.get("/health", response_model=HealthResponse, tags=["system"])
     def health() -> HealthResponse:
@@ -43,43 +46,36 @@ def create_app(
     @application.post("/reviews", response_model=ReviewResponse, tags=["reviews"])
     def review(request: ReviewRequest) -> ReviewResponse:
         try:
-            git_service = GitService(
-                repo_path=request.repo_path,
-                allowed_repo_root=app_settings.allowed_repo_root,
-                timeout_seconds=app_settings.git_timeout_seconds,
-                max_file_chars=app_settings.max_file_chars,
-                max_diff_chars=app_settings.max_diff_chars,
-                max_search_results=app_settings.max_search_results,
-            )
-            tools = build_review_tools(
-                git_service,
-                request.base_ref,
-                request.head_ref,
-            )
-            review_graph = build_review_graph(
-                git_service,
-                tools,
-                model or create_chat_model(app_settings),
-                max_agent_rounds=app_settings.max_agent_rounds,
-                max_tool_calls=app_settings.max_tool_calls,
-                structured_output_method=(app_settings.llm_structured_output_method),
-                output_dir=app_settings.output_dir,
-            )
-            result = review_graph.invoke(create_initial_state(request))
+            return review_service.review(request)
         except GitServiceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ModelConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ModelInvocationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except HistoryStoreError as exc:
+            raise HTTPException(status_code=500, detail="审查历史保存失败。") from exc
 
-        return ReviewResponse(
-            status=result["status"],
-            summary=result["summary"],
-            findings=result["findings"],
-            markdown_report=result["markdown_report"],
-            error=result["error"],
-        )
+    @application.get(
+        "/reviews",
+        response_model=ReviewHistoryList,
+        tags=["reviews"],
+    )
+    def list_reviews(
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> ReviewHistoryList:
+        return review_service.list_history(limit=limit)
+
+    @application.get(
+        "/reviews/{review_id}",
+        response_model=ReviewHistoryRecord,
+        tags=["reviews"],
+    )
+    def get_review(review_id: UUID) -> ReviewHistoryRecord:
+        try:
+            return review_service.get_history(review_id)
+        except HistoryNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return application
 

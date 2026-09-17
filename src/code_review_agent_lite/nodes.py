@@ -1,12 +1,12 @@
-"""Node functions used by the Lite LangGraph workflow."""
+"""Lite LangGraph 工作流的节点函数。"""
 
 from pathlib import Path
-from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.prebuilt import ToolNode
 
 from code_review_agent_lite.git_service import ChangedFile, GitService
+from code_review_agent_lite.history import HistoryStore
 from code_review_agent_lite.reviewer import (
     REVIEW_SYSTEM_PROMPT,
     STRUCTURE_REVIEW_PROMPT,
@@ -17,7 +17,7 @@ from code_review_agent_lite.reviewer import (
 from code_review_agent_lite.schemas import Finding, ModelReviewResult
 from code_review_agent_lite.state import ReviewState
 
-MAX_FINDINGS = 10
+MAX_FINDINGS = 10 #模型最多可以返回 20 条候选问题，但经过过滤后，最终最多接受 10 条。
 
 
 def prepare_review(
@@ -25,15 +25,19 @@ def prepare_review(
     *,
     git_service: GitService,
 ) -> dict[str, object]:
-    """Load Git input and create the first two Agent messages."""
+    """加载 Git 输入并创建前两条 Agent 消息。"""
 
-    changed_files = git_service.list_changed_files(
+    base_commit, head_commit = git_service.resolve_range(
         state["base_ref"],
         state["head_ref"],
     )
+    changed_files = git_service.list_changed_files(
+        base_commit,
+        head_commit,
+    )
     diff, added_lines = git_service.read_diff_with_added_lines(
-        state["base_ref"],
-        state["head_ref"],
+        base_commit,
+        head_commit,
     )
     changed_file_text = (
         "\n".join(
@@ -44,10 +48,14 @@ def prepare_review(
     )
     request_message = (
         "请审查下面的 Git 变更。\n\n"
+        f"提交范围：{base_commit}..{head_commit}\n\n"
+        f"{render_review_criteria(state)}\n\n"
         f"变更文件：\n{changed_file_text}\n\n"
         f"Diff：\n```diff\n{diff}\n```"
     )
     return {
+        "base_commit": base_commit,
+        "head_commit": head_commit,
         "changed_files": changed_files,
         "diff": diff,
         "added_lines": added_lines,
@@ -63,7 +71,7 @@ def review_agent(
     *,
     model: BoundChatModel,
 ) -> dict[str, object]:
-    """Ask the model either to call tools or return its final text."""
+    """让模型调用工具或返回最终文本。"""
 
     try:
         response = model.invoke(state["messages"])
@@ -79,7 +87,7 @@ def execute_tools(
     *,
     tool_node: ToolNode,
 ) -> dict[str, object]:
-    """Execute one model-requested tool batch and count the round."""
+    """执行一批模型工具调用并记录轮次。"""
 
     requested_calls = count_requested_tool_calls(state)
     result = tool_node.invoke(state)
@@ -95,7 +103,7 @@ def structure_review(
     *,
     model: StructuredReviewModel,
 ) -> dict[str, object]:
-    """Convert the Agent conversation into strict Pydantic output."""
+    """ 将 Agent 对话转换为严格的 Pydantic 输出。"""
 
     try:
         result = model.invoke(
@@ -123,7 +131,7 @@ def stop_review(
     *,
     max_tool_calls: int,
 ) -> dict[str, object]:
-    """Return a bounded failure before an over-limit tool batch executes."""
+    """在执行超限工具批次前返回失败结果。"""
 
     pending_calls = count_requested_tool_calls(state)
     if state["tool_calls"] + pending_calls > max_tool_calls:
@@ -147,20 +155,31 @@ def generate_report(
     *,
     output_dir: Path,
 ) -> dict[str, object]:
-    """Write the final state to one small UTF-8 Markdown report."""
+    """将最终状态写入 UTF-8 Markdown 报告。"""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    report_path = output_dir / f"review-{uuid4().hex}.md"
+    report_path = output_dir / f"review-{state['review_id']}.md"
     report_path.write_text(render_markdown(state), encoding="utf-8")
     return {"markdown_report": report_path}
 
 
+def save_history(
+    state: ReviewState,
+    *,
+    history_store: HistoryStore,
+) -> dict[str, object]:
+    """报告生成后保存审查历史。"""
+
+    history_store.save_state(state)
+    return {"history_saved": True}
+
+#########################################
 def validate_findings(
     candidates: list[Finding],
     changed_files: list[ChangedFile],
     added_lines: dict[str, set[int]],
 ) -> list[Finding]:
-    """Keep added-line findings, remove duplicates, and cap the result."""
+    """保留新增行问题、去重并限制数量。"""
 
     changed_paths = {item.path.replace("\\", "/") for item in changed_files}
     accepted: list[Finding] = []
@@ -173,7 +192,7 @@ def validate_findings(
         if candidate.line not in added_lines.get(normalized_path, set()):
             continue
 
-        # The message is part of the key so different problems on one line survive.
+        # 将描述纳入键中，以保留同一行的不同问题。
         key = (normalized_path, candidate.line, candidate.message.strip().casefold())
         if key in seen:
             continue
@@ -185,7 +204,7 @@ def validate_findings(
 
 
 def count_requested_tool_calls(state: ReviewState) -> int:
-    """Count calls in the latest model response without executing them."""
+    """最新一次回复中，请求调用了多少个工具"""
 
     last_message = state["messages"][-1]
     if not isinstance(last_message, AIMessage):
@@ -194,10 +213,20 @@ def count_requested_tool_calls(state: ReviewState) -> int:
 
 
 def render_markdown(state: ReviewState) -> str:
-    """Render one deterministic Markdown document from final graph state."""
+    """根据最终图状态渲染确定性 Markdown。"""
 
     lines = [
         "# 代码审查报告",
+        "",
+        "## 审查信息",
+        "",
+        f"- 审查 ID：`{state['review_id']}`",
+        f"- Commit Range：`{state['base_commit']}..{state['head_commit']}`",
+        f"- 变更文件数：{len(state['changed_files'])}",
+        "",
+        "## 审查标准",
+        "",
+        render_review_criteria(state),
         "",
         "## 总结",
         "",
@@ -224,3 +253,15 @@ def render_markdown(state: ReviewState) -> str:
     if state["error"]:
         lines.extend(["", "## 错误", "", f"`{state['error']}`"])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_review_criteria(state: ReviewState) -> str:
+    """为提示词和报告渲染有界审查标准。"""
+
+    lines: list[str] = []
+    if state["review_focus"]:
+        lines.append("审查重点：" + "、".join(state["review_focus"]))
+    if state["custom_rules"]:
+        lines.append("自定义规则：")
+        lines.extend(f"- {rule}" for rule in state["custom_rules"])
+    return "\n".join(lines) or "使用默认审查标准。"

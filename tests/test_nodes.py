@@ -81,12 +81,19 @@ def test_validate_findings_keeps_only_added_diff_lines() -> None:
 
 def test_generate_report_uses_unique_paths(tmp_path: Path) -> None:
     state = {
+        "review_id": "11111111111111111111111111111111",
+        "base_commit": "a" * 40,
+        "head_commit": "b" * 40,
+        "changed_files": [],
+        "review_focus": [],
+        "custom_rules": [],
         "summary": "审查完成。",
         "findings": [],
         "error": None,
     }
 
     first = generate_report(state, output_dir=tmp_path)["markdown_report"]
+    state["review_id"] = "22222222222222222222222222222222"
     second = generate_report(state, output_dir=tmp_path)["markdown_report"]
 
     assert first != second

@@ -11,7 +11,7 @@ from scripts.create_demo_repository import DemoRepository, create_demo_repositor
 
 
 class ScriptedToolCallingModel:
-    """Minimal deterministic model that follows a prepared response script."""
+    """按预设响应运行的精简确定性模型。"""
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class ScriptedToolCallingModel:
 
 
 class ScriptedStructuredReviewModel:
-    """Structured-output view of `ScriptedToolCallingModel`."""
+    """`ScriptedToolCallingModel` 的结构化输出视图。"""
 
     def __init__(self, parent: ScriptedToolCallingModel) -> None:
         self.parent = parent
@@ -74,6 +74,6 @@ class ScriptedStructuredReviewModel:
 
 @pytest.fixture
 def demo_repository(tmp_path: Path) -> DemoRepository:
-    """Reuse the public demo creator so docs and tests share one scenario."""
+    """复用演示仓库创建器，使文档与测试共享场景。"""
 
     return create_demo_repository(tmp_path / "demo-repository")

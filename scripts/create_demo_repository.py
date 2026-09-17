@@ -1,4 +1,4 @@
-"""Create a two-commit Git repository for the final project demo."""
+"""为项目演示创建双提交 Git 仓库。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from pathlib import Path
 
 
 class DemoCreationError(RuntimeError):
-    """Raised when the demo repository cannot be created safely."""
+    """无法安全创建演示仓库时抛出。"""
 
 
 @dataclass(frozen=True)
 class DemoRepository:
-    """Repository path and the commit range consumed by `/reviews`."""
+    """`/reviews` 使用的仓库路径与提交范围。"""
 
     path: Path
     base_sha: str
@@ -24,7 +24,7 @@ class DemoRepository:
 
 
 def run_git(repo_path: Path, *arguments: str) -> str:
-    """Run one bounded Git command and return its standard output."""
+    """执行有界 Git 命令并返回标准输出。"""
 
     try:
         result = subprocess.run(
@@ -47,7 +47,7 @@ def run_git(repo_path: Path, *arguments: str) -> str:
 
 
 def create_demo_repository(target: Path) -> DemoRepository:
-    """Create a base commit and a head commit containing one review issue."""
+    """创建基准提交和包含一个问题的头提交。"""
 
     target = target.expanduser().resolve()
     if target.exists() and not target.is_dir():
@@ -73,7 +73,7 @@ def create_demo_repository(target: Path) -> DemoRepository:
     run_git(target, "commit", "--quiet", "-m", "add safe user query")
     base_sha = run_git(target, "rev-parse", "HEAD")
 
-    # The second commit is intentionally unsafe so the review has a clear target.
+    # 第二个提交故意引入风险，便于演示审查。
     app_file.write_text(
         "def greet(name):\n"
         '    return f"Hello, {name}!"\n\n'

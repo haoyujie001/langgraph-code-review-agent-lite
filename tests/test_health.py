@@ -7,7 +7,7 @@ from code_review_agent_lite.main import create_app
 
 
 def get(app, path: str) -> Response:
-    """Send one in-process HTTP request without starting a real server."""
+    """不启动服务器，发送进程内 HTTP 请求。"""
 
     async def request() -> Response:
         transport = ASGITransport(app=app)

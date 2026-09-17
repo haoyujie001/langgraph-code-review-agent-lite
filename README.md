@@ -1,10 +1,10 @@
 # LangGraph Code Review Agent Lite
 
-A small, beginner-oriented Code Review Agent built stage by stage. The project now contains all **six stages**: bounded Git input, four tools, an LLM-controlled LangGraph loop, structured findings, basic validation, Markdown output, and a reproducible final demo.
+A small, beginner-oriented Code Review Agent built stage by stage. Version 0.7 adds four focused extensions without changing the single-agent design: custom review rules, visible commit-range metadata, JSON review history, and a 50-case evaluator.
 
 ## Current Stage
 
-Stage 6 closes the fixed project scope. It adds a reusable two-commit demo repository, makes tests consume the same demo scenario, updates the runbook, and performs final offline verification.
+The original six learning stages are complete. The current extension keeps the same workflow and adds practical inputs and outputs around it.
 
 Current API and graph flow:
 
@@ -19,11 +19,12 @@ POST /reviews
        -> structure_review       (when no tool call exists)
        -> stop_review            (when either execution limit is reached)
   -> generate_report
+  -> save_history
   -> END
   -> ReviewResponse
 ```
 
-The six-stage scope is fixed in [PROJECT_PLAN.md](PROJECT_PLAN.md).
+The maintained scope is recorded in [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
 ## Project Structure
 
@@ -35,18 +36,25 @@ langgraph-code-review-agent-lite
 │       ├── config.py
 │       ├── git_service.py
 │       ├── graph.py
+│       ├── history.py
 │       ├── main.py
 │       ├── nodes.py
 │       ├── reviewer.py
 │       ├── schemas.py
+│       ├── service.py
 │       ├── state.py
-│       └── tools.py
+│       ├── tools.py
+│       └── evaluator.py
+├── evals
+│   └── cases.json
 ├── tests
 │   ├── conftest.py
 │   ├── test_demo_script.py
 │   ├── test_git_service.py
 │   ├── test_graph.py
 │   ├── test_health.py
+│   ├── test_history.py
+│   ├── test_evaluator.py
 │   ├── test_nodes.py
 │   ├── test_review_api.py
 │   ├── test_reviewer.py
@@ -54,7 +62,8 @@ langgraph-code-review-agent-lite
 │   └── test_tools.py
 ├── scripts
 │   ├── __init__.py
-│   └── create_demo_repository.py
+│   ├── create_demo_repository.py
+│   └── run_evaluator.py
 ├── outputs
 │   └── .gitkeep
 ├── .env.example
@@ -434,7 +443,7 @@ Create a local `.env` from `.env.example` and adjust the allowed repository root
 
 ```dotenv
 CODE_REVIEW_APP_NAME=LangGraph Code Review Agent Lite
-CODE_REVIEW_APP_VERSION=0.6.2
+CODE_REVIEW_APP_VERSION=0.7.0
 CODE_REVIEW_ALLOWED_REPO_ROOT=D:\agent
 CODE_REVIEW_GIT_TIMEOUT_SECONDS=10
 CODE_REVIEW_MAX_FILE_CHARS=20000
@@ -449,6 +458,7 @@ CODE_REVIEW_LLM_TIMEOUT_SECONDS=60
 CODE_REVIEW_LLM_TEMPERATURE=0
 CODE_REVIEW_LLM_STRUCTURED_OUTPUT_METHOD=json_mode
 CODE_REVIEW_OUTPUT_DIR=outputs
+CODE_REVIEW_HISTORY_DIR=outputs/history
 ```
 
 The `.env` file is ignored by Git.
@@ -472,7 +482,7 @@ Expected health response:
 {
   "status": "ok",
   "app_name": "LangGraph Code Review Agent Lite",
-  "version": "0.6.2"
+  "version": "0.7.0"
 }
 ```
 
@@ -533,6 +543,8 @@ $body = @{
     repo_path = $demo.path
     base_ref = $demo.base_sha
     head_ref = $demo.head_sha
+    review_focus = @("安全性", "异常处理")
+    custom_rules = @("所有 SQL 必须使用参数化查询")
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -546,7 +558,10 @@ The API returns strict JSON-compatible findings and the generated report path:
 
 ```json
 {
+  "review_id": "7f2cc86b-93e7-45e5-98ce-21dc9bf308e7",
   "status": "completed",
+  "base_commit": "<40-character base SHA>",
+  "head_commit": "<40-character head SHA>",
   "summary": "发现一处高风险 SQL 注入问题。",
   "findings": [
     {
@@ -575,6 +590,47 @@ outputs/review-<uuid>.md
 
 To run the demo again, pass a different empty target directory to `--target`.
 
+## Custom Rules and Commit Range
+
+`review_focus` accepts at most five short focus areas and `custom_rules` accepts at most ten project rules. They are validated by Pydantic, stored in `ReviewState`, included in the model request, written to the Markdown report, and retained in history. They cannot replace system constraints or enable write operations.
+
+`base_ref` and `head_ref` accept branches, tags, abbreviated SHAs, or full SHAs. `GitService` validates both refs with `git rev-parse --verify`, resolves them to immutable 40-character commit IDs, and uses only those IDs for the review tools. The resolved IDs are returned as `base_commit` and `head_commit`.
+
+## Review History
+
+Every graph run writes one independent UTF-8 JSON file to `outputs/history`. A file name is the review UUID, so concurrent reviews do not overwrite each other and no database is required.
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/reviews?limit=20"
+Invoke-RestMethod "http://127.0.0.1:8000/reviews/<review_id>"
+```
+
+The list endpoint returns newest records first. Each record contains refs, resolved commits, rules, changed paths, tool counters, findings, and the Markdown path.
+
+## Minimal Evaluator
+
+`evals/cases.json` contains 50 synthetic two-commit repositories. The 38 positive cases contain 12 security, 10 bug, 8 performance, and 8 maintainability expectations. Another 12 safe cases measure false positives. The scorer matches stable fields (`path`, `line`, `category`, and optional `severity`) instead of model wording.
+
+Run one inexpensive smoke case first:
+
+```powershell
+python -m scripts.run_evaluator --max-cases 1
+```
+
+Run or retry one named case:
+
+```powershell
+python -m scripts.run_evaluator --case-id sort_only_for_max
+```
+
+Run all 50 cases:
+
+```powershell
+python -m scripts.run_evaluator
+```
+
+The complete run makes many model requests and can take several minutes, so use `--max-cases` while developing. The runner invokes the real workflow with the configured model and writes precision, recall, pass count, missing expectations, and unexpected findings to `outputs/evaluations/evaluation-<timestamp>.json`. Only synthetic dataset code is sent to the model provider.
+
 ## Test
 
 ```powershell
@@ -582,11 +638,11 @@ python -m ruff check .
 python -m pytest
 ```
 
-Final Stage 6 result:
+Current offline verification:
 
 ```text
 Ruff: All checks passed
-pytest: 40 passed
+pytest: 48 passed
 ```
 
 ## Current Completion Checklist
@@ -609,6 +665,11 @@ pytest: 40 passed
 - [x] Fixed LangGraph edges
 - [x] Compiled graph invocation
 - [x] `POST /reviews`
+- [x] Custom review focus and rules
+- [x] Resolved Commit Range in the API response
+- [x] Per-review JSON history
+- [x] `GET /reviews` and `GET /reviews/{review_id}`
+- [x] 50-case Evaluator with positive and negative samples
 - [x] OpenAI-compatible model adapter
 - [x] Chinese review prompt
 - [x] `bind_tools`
